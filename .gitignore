@@ -1,0 +1,53 @@
+# Local workspace data
+workspace/
+
+# Environments and secrets
+.env
+.env.*
+.server_info
+.venv/
+venv/
+
+# Python cache/build
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+
+# IDE/system
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Pytest
+.pytest_cache/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Prompt notes (personal scratch)
+.prompt/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Lance working directories (pipeline outputs, not fixtures)
+workspace/

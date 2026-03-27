@@ -1,0 +1,29 @@
+name: wiki_html_to_md_lance
+author: yao.lewei1@huawei.com
+description: Convert wiki HTML text.lance to markdown (text.lance only)
+operation: map
+network: false
+input_format: [html]
+input_fields:
+  text: [id, data, info, tags]
+output_format: md
+output_fields:
+  text: [data, info]
+config:
+  - name: remove_ref
+    type: bool
+    default: false
+    label: Remove references
+  - name: max_item_seconds
+    type: int
+    default: 8
+    label: Max seconds per item before fallback conversion
+  - name: rewrite_images
+    type: bool
+    default: true
+    label: Rewrite Wikimedia image URLs to local images/{id}
+  - name: dataset_dir
+    type: str
+    default: ""
+    label: Source dataset directory (for image_labels.lance mapping)
+tags: [wiki, html, markdown, lance]
