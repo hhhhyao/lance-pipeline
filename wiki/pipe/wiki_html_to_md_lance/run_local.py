@@ -112,6 +112,31 @@ def _iter_batches(
         yield idx, {name: rb.column(name).to_pylist() for name in rb.schema.names}
 
 
+def _verify_same_order(src_text: Path, dst_text: Path) -> None:
+    """Ensure output text.lance keeps the same row order as input."""
+    src_ids = (
+        lance.dataset(str(src_text))
+        .to_table(columns=["id"])
+        .column("id")
+        .to_pylist()
+    )
+    dst_ids = (
+        lance.dataset(str(dst_text))
+        .to_table(columns=["id"])
+        .column("id")
+        .to_pylist()
+    )
+    if len(src_ids) != len(dst_ids):
+        raise RuntimeError(
+            f"Row count mismatch after conversion: src={len(src_ids)} dst={len(dst_ids)}",
+        )
+    for idx, (sid, did) in enumerate(zip(src_ids, dst_ids, strict=True)):
+        if sid != did:
+            raise RuntimeError(
+                f"Row order mismatch at index={idx}: src_id={sid}, dst_id={did}",
+            )
+
+
 def run(
     src_dataset_dir: Path,
     dst_dataset_dir: Path,
@@ -193,25 +218,52 @@ def run(
                 rewrite_images,
             ),
         ) as pool:
-            result_iter = pool.map(
-                _worker_process,
-                _iter_batches(ds, batch_size),
-                chunksize=1,
-            )
-            for i, row_count, out_batch in result_iter:
-                out_table = _build_table(out_batch, schema)
-                mode = "overwrite" if not first_batch_written else "append"
-                lance.write_dataset(out_table, str(dst_text), mode=mode)
-                first_batch_written = True
+            pending: dict[cf.Future[tuple[int, int, dict[str, list[Any]]]], int] = {}
+            buffered: dict[int, tuple[int, dict[str, list[Any]]]] = {}
+            next_write_idx = 1
+            batch_iter = iter(_iter_batches(ds, batch_size))
+            max_pending = max(1, workers * 4)
 
-                done += row_count
-                if i % 20 == 0 or done == total:
-                    elapsed = time.time() - t0
-                    eta = (total - done) * elapsed / done if done else 0.0
-                    print(
-                        f"progress: {done}/{total} ({done * 100 / total:.1f}%) | "
-                        f"elapsed {elapsed:.1f}s | eta {eta:.1f}s",
-                    )
+            def _submit_until_full() -> None:
+                while len(pending) < max_pending:
+                    try:
+                        payload = next(batch_iter)
+                    except StopIteration:
+                        return
+                    fut = pool.submit(_worker_process, payload)
+                    pending[fut] = payload[0]
+
+            _submit_until_full()
+            while pending:
+                done_set, _ = cf.wait(
+                    pending.keys(),
+                    return_when=cf.FIRST_COMPLETED,
+                )
+                for fut in done_set:
+                    pending.pop(fut, None)
+                    idx, row_count, out_batch = fut.result()
+                    buffered[idx] = (row_count, out_batch)
+
+                while next_write_idx in buffered:
+                    row_count, out_batch = buffered.pop(next_write_idx)
+                    out_table = _build_table(out_batch, schema)
+                    mode = "overwrite" if not first_batch_written else "append"
+                    lance.write_dataset(out_table, str(dst_text), mode=mode)
+                    first_batch_written = True
+
+                    done += row_count
+                    if next_write_idx % 20 == 0 or done == total:
+                        elapsed = time.time() - t0
+                        eta = (total - done) * elapsed / done if done else 0.0
+                        print(
+                            f"progress: {done}/{total} ({done * 100 / total:.1f}%) | "
+                            f"elapsed {elapsed:.1f}s | eta {eta:.1f}s",
+                        )
+                    next_write_idx += 1
+
+                _submit_until_full()
+
+    _verify_same_order(src_text, dst_text)
 
     for table_name in ("images.lance", "image_labels.lance"):
         src_table = src_dataset_dir / table_name
